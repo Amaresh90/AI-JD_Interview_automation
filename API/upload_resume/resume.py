@@ -212,26 +212,7 @@ async def upload_resume(file: UploadFile = File(...)):
     response_data["is_selected"] = False
 
     return JSONResponse(content=response_data)
-
-
-@resume_router.put("/update/{_id}")
-async def update_resume(_id: str, update: Update_resume):
-    resume = resume_collection.find_one({"_id": ObjectId(_id)})
-    if not resume:
-        raise HTTPException(status_code=404, detail="Resume not found")
-
-    if update.is_active is True:
-        update_fields = {
-            "is_active": True,
-            "updated_at": datetime.utcnow()
-        }
-        resume_collection.update_one({"_id": ObjectId(_id)}, {"$set": update_fields})
-        resume.update(update_fields)
-        return {"message": "Resume updated successfully", "resume": resume}
-    else:
-        return {"message": "No update performed. is_active must be true."}
   
-
 
 # 3.list of folders
 @resume_router.get("/list_folders",dependencies=[Depends(required)])
