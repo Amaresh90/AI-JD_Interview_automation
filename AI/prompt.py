@@ -113,6 +113,7 @@ Here are the user's inputs:
 - work_mode: {work_mode}
 - experience Required: {exp}
 - skills: {skills}
+- no_vacancies:{no_vacancies}
 
 - Based on this input, please generate the **job_summary** and **responsibilities**.
 

@@ -5,6 +5,7 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "bcrypt>=4.3.0",
     "db-utils>=0.4.5",
     "dotenv>=0.9.9",
     "fastapi[standard]>=0.116.1",
@@ -13,7 +14,12 @@ dependencies = [
     "langchain-core>=0.3.74",
     "langchain-google-genai>=2.1.9",
     "langgraph>=0.6.4",
-    "pymongo[srv]>=4.14.0",
+    "loguru>=0.7.3",
+    "passlib>=1.7.4",
+    "pymongo>=4.14.0",
+    "pymupdf>=1.26.4",
     "pypdf2>=3.0.1",
+    "python-jose>=3.5.0",
     "schema>=0.7.7",
+ 
 ]
