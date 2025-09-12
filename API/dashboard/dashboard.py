@@ -1,7 +1,7 @@
 from fastapi import FastAPI, APIRouter, HTTPException
 from pymongo import DESCENDING
 from loguru import logger
-from database.config import hr_collection,jd_collection
+from database.config import hr_collection,jd_collection,resume_collection
 
 app = FastAPI()
 dashboard_router = APIRouter()
@@ -12,11 +12,13 @@ def get_dashboard():
         total_hr = hr_collection.count_documents({"role":{"$eq": "HR"}})
         users = hr_collection.count_documents({"role": {"$ne": "HR"}})
         active_jd = jd_collection.count_documents({"is_active": True})
+        total_resume = resume_collection.count_documents({"is_selected": True})
 
         return {
             "total_hr": total_hr,
             "total_users": users,
-            "total_active_jd": active_jd
+            "total_active_jd": active_jd,
+            "total_resume": total_resume
         }
     except Exception as e:
         logger.error(f"Error fetching dashboard data: {e}")

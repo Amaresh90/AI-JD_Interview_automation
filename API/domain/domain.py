@@ -1,16 +1,25 @@
-from fastapi import APIRouter, HTTPException, FastAPI, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from bson.objectid import ObjectId
 from database.config import domain_collection
 from database.schema import domain_details, all_domain_details
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
-from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
+import logging
+from fastapi.security import OAuth2PasswordBearer
 from typing import Optional
 from datetime import datetime
+from typing import List
 
-# --- router----
+# logger
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+
+)
+logger = logging.getLogger("__name__")
+logger.setLevel(logging.INFO)
+
 domain_router = APIRouter()
 app = FastAPI()
 
@@ -42,126 +51,161 @@ async def auth_middleware(request: Request, call_next):
     token = auth_header.split(" ")[1]
     try:
         payload = decode_token(token)
-        request.state.user = payload
+        request.state.user = payload  # save user payload in request
     except HTTPException as e:
         return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
 
     return await call_next(request)
 
-# Dependency for role check
+
+
+# # Dependency for role check
 def super_admin_required(token: str = Depends(oauth2_scheme)):
     payload = decode_token(token)
     role = payload.get("role", "").lower()
-    if role not in ["super_admin"]:
-        raise HTTPException(status_code=403, detail="Only super_admin can perform this action")
+    if role not in ["super_admin", "admin"]:
+        raise HTTPException(status_code=403, detail="Only super_admin or admin can view this page")
     return payload
-
-# ---base models---
-class Domain(BaseModel):
-    domain: str = Field(..., pattern=r'^@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$',
-    description="The domain should be a valid domain like example.com"
-    )
-    active: bool
+# ----------------- Pydantic Model ----------------
+class domains(BaseModel):
+    domain: str = Field(..., min_length=2, max_length=20,  pattern=r'^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$',description="The domain should be a valid domain like example.com")
+    is_active: bool | None = None 
     created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None  
+    updated_at: Optional[datetime] = None
 
-class DomainUpdate(BaseModel):
+class domainUpdateRequest(BaseModel):
     domain_id: str
     new_domain: str
+    is_active: bool | None = None 
 
-class DomainDelete(BaseModel):
-    domain_id: str 
-
-#----- validation handler -----
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request, exc: RequestValidationError):
-    errors = exc.errors()
-
-    missing_fields = [err["loc"][-1] for err in errors if err.get("type") == "value_error.missing"]
-    invalid_fields = [
-        {"field": err["loc"][-1], "message": err.get("msg")}
-        for err in errors if err.get("type") != "value_error.missing"
-    ]
-
-    response_content = {}
-    if missing_fields:
-        response_content["missing_fields"] = missing_fields
-    if invalid_fields:
-        response_content["invalid_fields"] = invalid_fields
-
-    return JSONResponse(status_code=422, content=response_content)
+class domainDeleteRequest(BaseModel):
+    domain_id: List[str]
 
 
-# ----------------------------
-@domain_router.post("/create_domain", dependencies=[Depends(super_admin_required)])
-def create_domain(domain: Domain):
-    # try:
-        if not domain.active:
-            raise HTTPException(status_code=400, detail="Domain must be active to create")
+# create (only super_admin)
 
-        now = datetime.utcnow()
-        domain_data = {
-            "domain": domain.domain,
-            "active": domain.active,
-            "created_at": now,
-            "updated_at": now
-        }
+@domain_router.post("/", dependencies=[Depends(super_admin_required)])
+async def create_domain(input_data: domains):
+    logger.info(f"Attempting to create domain: {input_data.domain}, is_active={input_data.is_active}")
 
-        new_domain_id = domain_collection.insert_one(domain_data).inserted_id
-        new_domain = domain_collection.find_one({"_id": new_domain_id})
+    if domain_collection.find_one({"domain": input_data.domain}):
+        logger.error(f"domain '{input_data.domain}' already exists")
+        raise HTTPException(status_code=409, detail="domain already exists")  
 
-        return {
-            "status_code": 201,
-            "message": "Domain created successfully",
-            "domain": domain_details(new_domain)
-        }
-    # except Exception as e:
-    #     return {
-    #         "message": f"Internal Server Error: {str(e)}",
-    #         "status_code": 500
-    #     }
-
-
-@domain_router.get("/get_domain", dependencies=[Depends(super_admin_required)])
-def get_domain():
-    domains = list(domain_collection.find())
-    return {
-        "status_code": 200,
-        "message": "success",
-        "payload": all_domain_details(domains)
+    now = datetime.utcnow()
+    domain_data = {
+        "domain": input_data.domain,
+        "is_active": input_data.is_active,
+        "created_at": now,
+        "updated_at": now
     }
 
-@domain_router.put("/update", dependencies=[Depends(super_admin_required)])
-async def update_domain(input_data: DomainUpdate):
-    
+    new_domain_id = domain_collection.insert_one(domain_data).inserted_id
+    logger.info(f"domain created successfully with ID: {new_domain_id}")
+
+    return {
+        "status_code": 201,
+        "message": "domain added",
+        "domain": domain_details(domain_collection.find_one({"_id": new_domain_id}))
+        # "playload": domain_data
+    }
+
+
+# ------------------- domain page --------------------
+def domain_details(domain: dict) -> dict:
+    return {
+        "id": str(domain.get("_id")),         
+        "domain": domain.get("domain", ""),         
+        "is_active": domain.get("is_active", False)  
+    }
+
+
+def all_domain_details(domains) -> list:
+    return [domain_details(domain) for domain in domains]
+
+
+# get all domains (any logged-in user can view)
+@domain_router.get("/")
+async def get_domains():
+    logger.info("Fetching all domains")
+    try:
+        domains = all_domain_details(domain_collection.find())
+        return {"status_code": 200, "domains": domains}
+    except Exception as e:
+        logger.error(f"Error while fetching domains: {e}")
+        return {"status_code": 500, "message": "Internal Server Error"}
+
+
+
+@domain_router.put("/", dependencies=[Depends(super_admin_required)])
+async def update_domain(input_data: domainUpdateRequest):
+    logger.info(f"=======>")
+    logger.info(f"Attempting to update domain ID: {input_data.domain_id}, is_active = {input_data.is_active}")
+
     if not ObjectId.is_valid(input_data.domain_id):
+        logger.error("Invalid domain ID format")
         raise HTTPException(status_code=400, detail="Invalid domain ID")
 
-    if domain_collection.find_one({"domain": input_data.new_domain}):
-        raise HTTPException(status_code=409, detail="Domain name already exists")
+    # Prevent duplicate domain names except for the current domain
+    existing = domain_collection.find_one({
+        "domain": input_data.new_domain,
+        "_id": {"$ne": ObjectId(input_data.domain_id)}
+    })
+    if existing:
+        logger.error(f"domain '{input_data.new_domain}' already exists")
+        raise HTTPException(status_code=409, detail="domain name already exists")
 
     updated = domain_collection.update_one(
         {"_id": ObjectId(input_data.domain_id)},
-        {"$set": {"domain": input_data.new_domain, "updated_at": datetime.utcnow()}}
+        {"$set": {
+            "domain": input_data.new_domain,
+            "is_active": input_data.is_active,
+            "updated_at": datetime.utcnow()
+        }}
     )
 
     if updated.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Domain not found")
+        logger.warning(f"No domain found with ID: {input_data.domain_id}")
+        raise HTTPException(status_code=404, detail="domain not found")
 
-    return {"status_code": 200, "message": "Domain updated successfully"}
+    logger.info(f"domain ID {input_data.domain_id} updated successfully")
+    return {"status_code": 200, "message": "domain updated successfully"}
+
+# delete (only super_admin)
+
+# delete multiple domains (only super_admin)
+@domain_router.delete("/", dependencies=[Depends(super_admin_required)])
+async def delete_domains(input_data: domainDeleteRequest):
+    logger.info(f"Attempting to delete domain IDs: {input_data.domain_id}")
+
+    # Validate domain_ids is a list
+    if not isinstance(input_data.domain_id, list) or not input_data.domain_id:
+        raise HTTPException(status_code=400, detail="domain_ids must be a non-empty list")
+
+    # Validate all IDs
+    valid_ids = []
+    for domain_id in input_data.domain_id:
+        if ObjectId.is_valid(domain_id):
+            valid_ids.append(ObjectId(domain_id))
+        else:
+            logger.warning(f"Invalid domain ID skipped: {domain_id}")
+
+    if not valid_ids:
+        raise HTTPException(status_code=400, detail="No valid domain IDs provided")
+
+    # Delete multiple domains
+    result = domain_collection.delete_many({"_id": {"$in": valid_ids}})
+
+    if result.deleted_count == 0:
+        logger.warning("No domains found for deletion")
+        raise HTTPException(status_code=404, detail="No domains found")
+
+    logger.info(f"Deleted {result.deleted_count} domain(s) successfully")
+    return {
+        "status_code": 200,
+        "message": f"{result.deleted_count} domain(s) deleted successfully"
+    }
 
 
-# -------------------- Delete Domain --------------------
-@domain_router.delete("/delete", dependencies=[Depends(super_admin_required)])
-async def delete_domain(input_data: DomainDelete):
 
-    if not ObjectId.is_valid(input_data.domain_id):
-        raise HTTPException(status_code=400, detail="Invalid domain ID")
-
-    deleted = domain_collection.delete_one({"_id": ObjectId(input_data.domain_id)})
-    if deleted.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Domain not found")
-    return {"status_code": 200, "message": "Domain deleted successfully"}
-
-# include router
 app.include_router(domain_router)
